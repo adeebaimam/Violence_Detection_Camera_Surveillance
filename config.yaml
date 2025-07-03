@@ -1,0 +1,17 @@
+default_profile: jail
+
+profiles:
+ jail:
+    yolo_model_path: "models/yolov8n-pose.pt"
+    hand_model_path: "model/hand_landmarker.task"
+    num_hands: 2
+    input_video_path: "/home/adeeba/Pose-Based Fighting Detector/resources/istockphoto-2083729739-640_adpp_is.mp4" 
+    wrist_speed_threshold: 20
+    acceleration_threshold: 1000
+    distance_to_neck_thresh: 50
+    distance_to_face_thresh: 50
+    fist_detection_radius: 20
+    trajectory_dot_threshold: 0.7
+    min_trigger_conditions: 4
+    trigger_consistency_frames: 2
+    alert_sound_path: "alert-sound-87478.mp3"
