@@ -1,8 +1,6 @@
-import threading
+# fight_detector.py
 
-# Function that wraps your existing fight detection code
-
-def run_camera_instance(camera_source, config, cam_name="Camera"):
+def run_fight_detection(video_path, config, cam_name="Camera",display =True):
     import cv2
     import numpy as np
     from collections import defaultdict
@@ -13,10 +11,60 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
     from mediapipe.tasks.python import vision
     from mediapipe.framework.formats import landmark_pb2
 
-    # Load YOLOv8n-pose model
-    pose_model = YOLO(config['yolo_model_path'])
+    import base64
+    from io import BytesIO
+    from datetime import datetime
+    import mysql.connector
+    from PIL import Image
+   
 
-    # Setup MediaPipe Hands
+    def img_to_data_url(img):
+        # Convert OpenCV (BGR) to RGB
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        # Convert to PIL Image
+        pil_img = Image.fromarray(img_rgb)
+
+        # Save to buffer in JPEG format
+        buffered = BytesIO()
+        pil_img.save(buffered, format="JPEG")
+
+        # Encode to base64
+        img_encoded = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+        # Format as Data URL
+        img_data_url = f"data:image/jpeg;base64,{img_encoded}"
+        return img_data_url
+
+    # DB insert function
+    def save_fight_event_to_db(cam_name, frame):
+        try:
+            
+            encoded_image = img_to_data_url(frame)
+            event_time =datetime.now()
+
+
+            conn = mysql.connector.connect(
+                host='localhost',
+                user='adeeba',         # ✅ Replace with your MySQL username
+                password='Tgyhtgyh@123',     # ✅ Replace with your MySQL password
+                database='fight_detection'
+            )
+            cursor = conn.cursor()
+            query = "INSERT INTO fight_events (camera_id, event_time, snapshot) VALUES (%s, %s, %s)"
+            values = (cam_name, event_time, encoded_image)
+            cursor.execute(query, values)
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print(f"[INFO] Fight event saved to DB from {cam_name} at {event_time}")
+        except mysql.connector.Error as err:
+            print(f"[ERROR] DB error: {err}")
+
+    # Setup models
+    pose_model = YOLO(config['yolo_model_path'])
+    pose_model.to('cpu')
+
     model_path = config['hand_model_path']
     base_options = python.BaseOptions(model_asset_path=model_path)
     options = vision.HandLandmarkerOptions(
@@ -26,6 +74,7 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
     )
     hand_detector = vision.HandLandmarker.create_from_options(options)
 
+    # Helper functions
     def convert_to_mp_image(image):
         return mp.Image(image_format=mp.ImageFormat.SRGB, data=image)
 
@@ -56,8 +105,7 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
             get_distance(middle_tip, middle_mcp)
         ]
         hand_size = get_distance(wrist, index_mcp)
-        avg_finger_dist = np.mean(finger_distances)
-        return avg_finger_dist < 0.4 * hand_size
+        return np.mean(finger_distances) < 0.4 * hand_size
 
     def get_trajectory(history):
         if len(history) < 2:
@@ -68,7 +116,7 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
         velocity = (np.array(p2) - np.array(p1)) / dt
         return velocity / (np.linalg.norm(velocity) + 1e-6)
 
-    cap = cv2.VideoCapture(camera_source)
+    cap = cv2.VideoCapture(video_path)
     cap.set(3, 640)
     cap.set(4, 480)
 
@@ -89,7 +137,6 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
         if keypoints is not None and boxes is not None:
             keypoints = keypoints.data.cpu().numpy()
             boxes = boxes.data.cpu().numpy()
-
             for i, (kps, box) in enumerate(zip(keypoints, boxes)):
                 rwrist = tuple(kps[10][:2])
                 lwrist = tuple(kps[9][:2])
@@ -102,9 +149,9 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
         current_time = cv2.getTickCount()
         timestamp = int(((current_time - start_time) / cv2.getTickFrequency()) * 1e6)
         second_stamp = (current_time - start_time) / cv2.getTickFrequency()
-
         hand_result = hand_detector.detect_for_video(mp_image, timestamp)
-        # ---- Insert your existing fight detection logic from here (no changes needed) ----
+
+      
         if hand_result.hand_landmarks:
             for hand_landmarks in hand_result.hand_landmarks:
                 landmark_list = landmark_pb2.NormalizedLandmarkList(
@@ -132,13 +179,6 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
                 if iou < 0.1:
                     continue
 
-                #if iou < 0.1 or iou > 0.6:
-                    # If people are too close (possibly standing idly), require motion
-                #   near_but_idle = True
-                #else:
-                #   near_but_idle = False
-
-
                 for wrist_key in ["rwrist", "lwrist"]:
                     wrist = personA[wrist_key]
                     neck = personB["neck"]
@@ -147,29 +187,23 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
                     own_neck = personA["neck"]
                     box_height = personA["box_height"]
 
-                    # Skip if wrist is closer to own neck (e.g., folded arms)
                     if get_distance(wrist, own_neck) < get_distance(wrist, neck) * 0.5:
                         continue
 
-                    # Normalize distances by person height
                     dist_neck = get_distance(wrist, neck) / box_height
                     dist_face = get_distance(wrist, nose) / box_height
                     dist_wrist = get_distance(wrist, wristB) / box_height
 
                     history = wrist_history[(personA["id"], wrist_key)]
-                    condition_count = 0
-                    conditions = []
+                    condition_count, conditions = 0, []
 
-                    # Condition 1: Wrist speed
                     if len(history) >= 2:
                         t1, p1 = history[-2]
                         t2, p2 = history[-1]
                         v2 = get_distance(p1, p2) / (t2 - t1 + 1e-6)
                         conditions.append(v2 > config['wrist_speed_threshold'])
-                        if conditions[-1]:
-                            condition_count += 1
+                        condition_count += conditions[-1]
 
-                    # Condition 2: Wrist acceleration
                     if len(history) >= 3:
                         t0, p0 = history[-3]
                         t1, p1 = history[-2]
@@ -178,22 +212,16 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
                         v2 = get_distance(p1, p2) / (t2 - t1 + 1e-6)
                         acc = (v2 - v1) / (t2 - t1 + 1e-6)
                         conditions.append(acc > config['acceleration_threshold'])
-                        if conditions[-1]:
-                            condition_count += 1
+                        condition_count += conditions[-1]
                     else:
                         conditions.append(False)
 
-                    # Condition 3: Wrist near opponent's neck (normalized)
                     conditions.append(dist_neck < config['distance_to_neck_thresh'] / box_height)
-                    if conditions[-1]:
-                        condition_count += 1
+                    condition_count += conditions[-1]
 
-                    # Condition 4: Wrist near opponent's face (normalized)
                     conditions.append(dist_face < config['distance_to_face_thresh'] / box_height)
-                    if conditions[-1]:
-                        condition_count += 1
+                    condition_count += conditions[-1]
 
-                    # Condition 5: Fist detection
                     is_fist_detected = False
                     if hand_result.hand_landmarks:
                         for hand_landmarks in hand_result.hand_landmarks:
@@ -202,28 +230,20 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
                                 is_fist_detected = is_fist(hand_landmarks, width, height)
                                 break
                     conditions.append(is_fist_detected)
-                    if is_fist_detected:
-                        condition_count += 1
+                    condition_count += is_fist_detected
 
-                    # Condition 6: Wrist trajectory toward opponent's face
                     trajectory = get_trajectory(history)
                     trajectory_condition = False
                     if trajectory is not None:
                         face_vec = np.array(nose) - np.array(wrist)
-                        face_vec = face_vec / (np.linalg.norm(face_vec) + 1e-6)
+                        face_vec /= (np.linalg.norm(face_vec) + 1e-6)
                         dot_product = np.dot(trajectory, face_vec)
                         trajectory_condition = dot_product > config['trajectory_dot_threshold']
                     conditions.append(trajectory_condition)
-                    if trajectory_condition:
-                        condition_count += 1
-                    
+                    condition_count += trajectory_condition
 
-
-                    # Require 4 conditions to increment fight score
                     if condition_count >= config['min_trigger_conditions']:
                         trigger_buffer[(i, j)] += 1
-                        # Debugging output to understand false positives
-                        print(f"A{i}->B{j}: score={condition_count}, conditions={conditions}")
                     else:
                         trigger_buffer[(i, j)] = 0
 
@@ -233,33 +253,17 @@ def run_camera_instance(camera_source, config, cam_name="Camera"):
                         x1, y1, x2, y2 = personB["box"][:4].astype(int)
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
                         playsound(config['alert_sound_path'], block=False)
+                        save_fight_event_to_db(cam_name, frame)
 
-        # Just change cv2.imshow("Fight Detection", frame) to below:
         frame = results.plot()
-        cv2.imshow(f"{cam_name}", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+
+        if display:
+            cv2.imshow(cam_name, frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+
 
     cap.release()
-    cv2.destroyAllWindows()
+    if display:
+        cv2.destroyAllWindows()
 
-
-# =========================
-# MAIN BLOCK TO RUN THREADS
-# =========================
-import yaml
-
-with open("config.yaml", "r") as f:
-    raw_config = yaml.safe_load(f)
-config = raw_config["profiles"][raw_config["default_profile"]]
-
-camera_sources = ['/home/adeeba/Pose-Based Fighting Detector/resources/istockphoto-2083729739-640_adpp_is.mp4','/home/adeeba/Pose-Based Fighting Detector/resources/istockphoto-2129470089-640_adpp_is.mp4' ]  # Change to video file paths if needed
-threads = []
-
-for idx, cam_src in enumerate(camera_sources):
-    t = threading.Thread(target=run_camera_instance, args=(cam_src, config, f"Camera {idx+1}"), daemon=True)
-    t.start()
-    threads.append(t)
-
-for t in threads:
-    t.join()

@@ -1,11 +1,16 @@
-default_profile: jail
+default_profile: cam1
 
 profiles:
- jail:
+ cam1:
     yolo_model_path: "models/yolov8n-pose.pt"
     hand_model_path: "model/hand_landmarker.task"
-    num_hands: 2
-    input_video_path: "/home/adeeba/Pose-Based Fighting Detector/resources/istockphoto-2083729739-640_adpp_is.mp4" 
+    num_hands: 4
+    input_video_paths: 
+      - "/home/adeeba/Pose-Based Fighting Detector/resources/Stunt Fighting 👊🏽.mp4"
+      
+    #camera_sources:
+    #  - 0
+    #  - "rtsp://ranu:Bharat1947@192.168.177.145:10556/stream1"
     wrist_speed_threshold: 20
     acceleration_threshold: 1000
     distance_to_neck_thresh: 50
@@ -15,3 +20,4 @@ profiles:
     min_trigger_conditions: 4
     trigger_consistency_frames: 2
     alert_sound_path: "alert-sound-87478.mp3"
+    display: true
