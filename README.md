@@ -50,7 +50,6 @@ The goal of this project is to detect physical altercations or abnormal human be
 git clone https://github.com/adeebaimam/Violence_Detection_Camera_Surveillance.git
 cd Violence_Detection_Camera_Surveillance
 
-
 ### 2. Create a virtual environment and install dependencies
 
 python -m venv venv
