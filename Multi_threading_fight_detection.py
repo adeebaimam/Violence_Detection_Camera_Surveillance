@@ -47,7 +47,7 @@ def run_fight_detection(video_path, config, cam_name="Camera",display =True):
             conn = mysql.connector.connect(
                 host='localhost',
                 user='adeeba',         # ✅ Replace with your MySQL username
-                password='Tgyhtgyh@123',     # ✅ Replace with your MySQL password
+                password='******',     # ✅ Replace with your MySQL password
                 database='fight_detection'
             )
             cursor = conn.cursor()
